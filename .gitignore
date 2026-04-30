@@ -1,0 +1,20 @@
+# данные и папки с данными
+data/
+
+# тяжелые/временные файлы
+*.zip
+*.tar.gz
+*.csv
+*.bin
+*.tsv
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
