@@ -1,20 +1,17 @@
-# данные и папки с данными
-data/
+.venv
 
-# тяжелые/временные файлы
-*.zip
-*.tar.gz
-*.csv
-*.bin
-*.tsv
-
-# Python-generated files
 __pycache__/
 *.py[oc]
 build/
 dist/
 wheels/
 *.egg-info
+.ipynb_checkpoints
+.ruff_cache/
 
-# Virtual environments
-.venv
+.env
+logs/*
+data/*
+models/*
+weights/*
+.vscode/*
