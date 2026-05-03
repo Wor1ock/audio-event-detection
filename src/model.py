@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics
+from torchvision.models import resnet18
 
 
 class AudioClassificationModel(L.LightningModule):
@@ -23,9 +24,10 @@ class AudioClassificationModel(L.LightningModule):
     def training_step(self, batch, _batch_idx):
         x, y = batch
         logits = self(x)
-        loss = F.cross_entropy(logits, y)
 
+        loss = F.cross_entropy(logits, y, label_smoothing=0.1)
         acc = self.train_acc(logits, y)
+
         self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("train_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
@@ -50,38 +52,15 @@ class BaseNetwork(nn.Module):
         super().__init__()
         in_channels = input_shape[0]
 
-        def conv_block(in_f, out_f, use_pool=True, use_dropout=False):
-            layers = [
-                nn.Conv2d(in_f, out_f, kernel_size=3, padding=1),
-                nn.BatchNorm2d(out_f),
-                nn.ReLU(),
-            ]
-            if use_pool:
-                layers.append(nn.MaxPool2d(2))
-            if use_dropout:
-                layers.append(nn.Dropout(0.2))
-            return nn.Sequential(*layers)
+        self.model = resnet18(weights=None)
 
-        self.features = nn.Sequential(
-            conv_block(in_channels, 64),
-            conv_block(64, 128),
-            conv_block(128, 256, use_pool=False),
-            conv_block(256, 512, use_dropout=True),
+        self.model.conv1 = nn.Conv2d(
+            in_channels=in_channels, out_channels=64, kernel_size=7, stride=2, padding=3, bias=False
         )
 
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.n_flatten = 512
-
-        self.fc = nn.Sequential(
-            nn.Linear(self.n_flatten, 512),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(512, num_classes),
-        )
+        num_ftrs = self.model.fc.in_features
+        self.model.fc = nn.Sequential(nn.Dropout(0.3), nn.Linear(num_ftrs, num_classes))
 
     def forward(self, x):
-        x = self.features(x)
-        x = self.avg_pool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-        return x
+        # x: (batch, 1, n_mels, time)
+        return self.model(x)
