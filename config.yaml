@@ -1,31 +1,30 @@
 data:
   train_csv: "data/train.csv"
   train_audio_dir: "data/audio_train/train"
-  train_np_dir: "data/train_np"
-  train_pickle: "data/train.pickle"
-  stats_pickle: "data/stats.pickle"
-  labels_pickle: "data/labels.pickle"
   test_audio_dir: "data/audio_test/test"
-  test_np_dir: "data/test_np"
-  test_pickle: "data/test.pickle"
+  noise_dir: "data/audio_train/train" 
   submission_csv: "data/submission.csv"
   test_size: 800
 
 audio:
-  duration_sec: 2
   sample_rate: 16000
-  n_fft: 1024
-  hop_length: 256
-  n_mels: 128
 
 model:
   num_classes: 41
-  lr: 0.001
-  weight_decay: 0.00001
+  lr: 0.00001
+  weight_decay: 0.1
+  milestones: [2, 4]
 
 training:
-  batch_size: 64
-  max_epochs: 100
-  patience: 12
+  batch_size: 4
+  gradient_accumulation_steps: 4
+  max_epochs: 15
+  patience: 5
   random_state: 42
   num_workers: 4
+
+augmentation:
+  use_specaug: False
+  max_proportion: 0.3
+  mixin_prob: 0.5
+  snr_db: 15

@@ -1,6 +1,6 @@
-import pickle
 from pathlib import Path
 
+import pandas as pd
 import pytorch_lightning as L
 import yaml
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
@@ -8,8 +8,8 @@ from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 from sklearn.model_selection import StratifiedShuffleSplit
 
 from src.dataset import AudioDataModule
-from src.model import AudioClassificationModel
-from src.utils import compute_norm_stats, plot_metrics_from_log, set_seed
+from src.model import ASTClassificationModel
+from src.utils import set_seed
 
 
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -17,57 +17,48 @@ def load_config(config_path: str = "config.yaml") -> dict:
         return yaml.safe_load(f)
 
 
-def train() -> None:
+def train():
     cfg = load_config()
     set_seed(cfg["training"]["random_state"])
 
-    with Path(cfg["data"]["train_pickle"]).open("rb") as f:
-        train_data = pickle.load(f)
+    df = pd.read_csv(cfg["data"]["train_csv"])
+    audio_dir = Path(cfg["data"]["train_audio_dir"])
 
-    all_npy_paths = [row["npy_path"] for row in train_data]
-    all_labels = [row["label_id"] for row in train_data]
+    df["audio_path"] = df["fname"].apply(lambda x: str(audio_dir / x))
 
-    window_size = int((cfg["audio"]["duration_sec"] * cfg["audio"]["sample_rate"]) / cfg["audio"]["hop_length"])
-    n_mels = cfg["audio"]["n_mels"]
-    num_classes = cfg["model"]["num_classes"]
-    num_workers = cfg["training"].get("num_workers", 0)
+    labels = sorted(df["label"].unique().tolist())
+    label_to_id = {label: idx for idx, label in enumerate(labels)}
+    df["label_id"] = df["label"].map(label_to_id)
 
     sss = StratifiedShuffleSplit(
         n_splits=1, test_size=cfg["data"]["test_size"], random_state=cfg["training"]["random_state"]
     )
+    train_idx, val_idx = next(sss.split(df["audio_path"], df["label_id"]))
 
-    train_idx, val_idx = next(sss.split(all_npy_paths, all_labels))
+    train_df = df.iloc[train_idx].reset_index(drop=True)
+    val_df = df.iloc[val_idx].reset_index(drop=True)
 
-    x_tr = [all_npy_paths[i] for i in train_idx]
-    y_tr = [all_labels[i] for i in train_idx]
-    x_val = [all_npy_paths[i] for i in val_idx]
-    y_val = [all_labels[i] for i in val_idx]
+    noise_dir = Path(cfg["data"]["noise_dir"])
+    noise_paths = list(noise_dir.glob("*.wav"))
 
-    train_stats = compute_norm_stats(x_tr)
-    with Path(cfg["data"]["stats_pickle"]).open("wb") as f:
-        pickle.dump(train_stats, f)
+    dm_config = {
+        "batch_size": cfg["training"]["batch_size"],
+        "num_workers": cfg["training"]["num_workers"],
+        "sample_rate": cfg["audio"]["sample_rate"],
+        "use_specaug": cfg["augmentation"]["use_specaug"],
+        "max_proportion": cfg["augmentation"]["max_proportion"],
+        "mixin_prob": cfg["augmentation"]["mixin_prob"],
+        "snr_db": cfg["augmentation"]["snr_db"],
+    }
 
-    dm = AudioDataModule(
-        x_train=x_tr,
-        y_train=y_tr,
-        x_val=x_val,
-        y_val=y_val,
-        batch_size=cfg["training"]["batch_size"],
-        window_size=window_size,
-        num_workers=num_workers,
-        stats=train_stats,
-    )
+    dm = AudioDataModule(train_df=train_df, val_df=val_df, config=dm_config, noise_paths=noise_paths)
 
-    # input_shape: (каналы=1, n_mels, window_size)
-    input_shape = (1, n_mels, window_size)
-    model = AudioClassificationModel(
-        num_classes=num_classes,
-        input_shape=input_shape,
-        lr=cfg["model"]["lr"],
+    model = ASTClassificationModel(
+        num_classes=cfg["model"]["num_classes"], lr=cfg["model"]["lr"], weight_decay=cfg["model"]["weight_decay"]
     )
 
     checkpoint_callback = ModelCheckpoint(
-        dirpath="models/",
+        dirpath="models/ast_run/",
         filename="best-{epoch:02d}-{val_acc:.3f}",
         monitor="val_acc",
         mode="max",
@@ -75,20 +66,18 @@ def train() -> None:
     )
 
     early_stop_callback = EarlyStopping(monitor="val_loss", patience=cfg["training"]["patience"], mode="min")
-    csv_logger = CSVLogger("logs", name="audio_rnd")
-    tb_logger = TensorBoardLogger("logs", name="tb_logs")
 
     trainer = L.Trainer(
         max_epochs=cfg["training"]["max_epochs"],
         accelerator="auto",
         devices=1,
-        logger=[csv_logger, tb_logger],
+        precision="16-mixed",
+        accumulate_grad_batches=cfg["training"]["gradient_accumulation_steps"],
+        logger=[CSVLogger("logs", name="ast_audio"), TensorBoardLogger("logs", name="ast_tb")],
         callbacks=[checkpoint_callback, early_stop_callback],
-        deterministic="warn",
     )
 
     trainer.fit(model, datamodule=dm)
-    plot_metrics_from_log(f"{csv_logger.log_dir}/metrics.csv")
 
 
 if __name__ == "__main__":

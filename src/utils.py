@@ -2,11 +2,9 @@ import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import pytorch_lightning as L
 import torch
-from tqdm import tqdm
 
 
 def set_seed(seed: int = 42):
@@ -19,16 +17,6 @@ def set_seed(seed: int = 42):
     if torch.cuda.is_available():
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-
-
-def compute_norm_stats(npy_paths):
-    means = []
-    stds = []
-    for path in tqdm(npy_paths, desc="Computing stats"):
-        data = np.load(path)
-        means.append(data.mean())
-        stds.append(data.std())
-    return np.mean(means), np.mean(stds)
 
 
 def plot_metrics_from_log(log_path: str):
