@@ -6,7 +6,7 @@ from transformers import ASTForAudioClassification
 
 
 class ASTClassificationModel(L.LightningModule):
-    def __init__(self, num_classes: int, _lr: float = 1e-5, _weight_decay: float = 0.1):
+    def __init__(self, num_classes: int, lr: float = 1e-5, weight_decay: float = 0.1):  # noqa: ARG002
         super().__init__()
         self.save_hyperparameters()
 
