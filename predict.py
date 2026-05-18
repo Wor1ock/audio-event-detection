@@ -1,76 +1,79 @@
-import argparse
 import pickle
 from pathlib import Path
 
+import hydra
 import pandas as pd
 import torch
-import yaml
-from torch.utils.data import DataLoader
+from omegaconf import DictConfig
 from tqdm import tqdm
 
-from src.dataset import ASTAudioDataset
-from src.model import ASTClassificationModel
+from src.dataset import AudioDataModule
+from src.model import ASTAudioClassifier, AudioTrainingSystem
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="AST Inference on raw audio.")
-    parser.add_argument("--config", type=Path, default=Path("config.yaml"))
-    parser.add_argument("--checkpoint", type=Path, default=None)
-    parser.add_argument("--labels-pickle", type=Path, default=Path("data/labels.pickle"))
-    return parser.parse_args()
+@hydra.main(version_base=None, config_path=".", config_name="config")
+def main(cfg: DictConfig) -> None:
+    with Path(hydra.utils.to_absolute_path(cfg.data.labels_pickle)).open("rb") as f:
+        labels_data = pickle.load(f)
+    label2id = labels_data["label2id"]
+    id2label = labels_data["id2label"]
+    num_classes = len(label2id)
 
-
-def main():
-    args = parse_args()
-    cfg = yaml.safe_load(args.config.open())
-
-    with args.labels_pickle.open("rb") as f:
-        label_to_id = pickle.load(f)
-
-    id_to_label = {idx: label for label, idx in label_to_id.items()}
-
-    checkpoint_path = args.checkpoint
+    checkpoint_path = cfg.prediction.get("checkpoint_path") if hasattr(cfg, "prediction") else None
     if checkpoint_path is None:
-        checkpoint_path = sorted(Path("models/ast_run/").glob("*.ckpt"))[-1]
+        checkpoint_dir = Path(hydra.utils.to_absolute_path(cfg.training.checkpoint_dir))
+        checkpoints = sorted(checkpoint_dir.glob("*.ckpt"))
+        if not checkpoints:
+            raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
+        checkpoint_path = checkpoints[-1]
+    else:
+        checkpoint_path = hydra.utils.to_absolute_path(checkpoint_path)
 
-    model = ASTClassificationModel.load_from_checkpoint(
-        checkpoint_path=str(checkpoint_path), num_classes=cfg["model"]["num_classes"]
+    abs_model_path = hydra.utils.to_absolute_path(str(cfg.model.model_path))
+    net = ASTAudioClassifier(
+        model_path=abs_model_path,
+        num_classes=num_classes,
+        dropout=0.0,
     )
-    model.eval()
+
+    system = AudioTrainingSystem.load_from_checkpoint(
+        checkpoint_path=str(checkpoint_path),
+        model=net,
+        num_classes=num_classes,
+    )
+    system.eval()
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
+    system = system.to(device)
 
-    test_dir = Path(cfg["data"]["test_audio_dir"])
-    test_files = sorted(test_dir.glob("*.wav"))
-    test_paths = [str(p) for p in test_files]
-    fnames = [p.name for p in test_files]
+    dm = AudioDataModule(
+        train_pickle_path=hydra.utils.to_absolute_path(cfg.data.train_meta_pickle),
+        test_pickle_path=hydra.utils.to_absolute_path(cfg.data.test_meta_pickle),
+        batch_size=cfg.training.batch_size * 2,
+        num_workers=cfg.training.num_workers,
+        test_size=cfg.data.test_size,
+        random_state=cfg.training.random_state,
+        train_transform=None,
+    )
 
-    dm_config = {
-        "sample_rate": cfg["audio"]["sample_rate"],
-        "use_specaug": False,
-        "batch_size": cfg["training"]["batch_size"] * 2,
-    }
-
-    dataset = ASTAudioDataset(audio_paths=test_paths, labels=None, config=dm_config, is_train=False)
-
-    loader = DataLoader(dataset, batch_size=dm_config["batch_size"], shuffle=False, num_workers=4)
+    dm.setup(stage="test")
+    loader = dm.test_dataloader()
 
     results = []
     with torch.inference_mode():
-        for i, batch in enumerate(tqdm(loader, desc="AST Predicting")):
-            # batch: [B, 1024, 128]
-            x = batch.to(device)
-            logits = model(x)
+        for batch in tqdm(loader, desc="Predicting"):
+            x = batch[0] if isinstance(batch, (list, tuple)) else batch
+            x = x.to(device)
 
+            logits = system(x)
             preds = torch.argmax(logits, dim=1).cpu().numpy()
+            results.extend(preds.tolist())
 
-            start_idx = i * dm_config["batch_size"]
-            for j, pred_id in enumerate(preds):
-                results.append({"fname": fnames[start_idx + j], "label": id_to_label[int(pred_id)]})
+    submission_path = Path(hydra.utils.to_absolute_path(cfg.data.submission_csv))
+    out_df = pd.read_csv(submission_path)
 
-    out_df = pd.DataFrame(results)
-    out_path = Path(cfg["data"]["submission_csv"])
-    out_df.to_csv(out_path, index=False)
+    out_df["label"] = [id2label[pred_id] for pred_id in results[: len(out_df)]]
+    out_df.to_csv(submission_path, index=False)
 
 
 if __name__ == "__main__":

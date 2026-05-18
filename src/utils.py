@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -20,10 +19,6 @@ def set_seed(seed: int = 42):
 
 
 def plot_metrics_from_log(log_path: str):
-    if not Path(log_path).exists():
-        print(f"Лог-файл {log_path} не найден.")
-        return
-
     metrics = pd.read_csv(log_path)
 
     metrics_epoch = metrics.groupby("epoch").mean().reset_index()
@@ -31,7 +26,6 @@ def plot_metrics_from_log(log_path: str):
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
 
-    # Loss
     train_loss = metrics_epoch.get("train_loss")
     val_loss = metrics_epoch.get("val_loss")
 
@@ -44,15 +38,14 @@ def plot_metrics_from_log(log_path: str):
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
-    # Accuracy
-    train_acc = metrics_epoch.get("train_acc")
-    val_acc = metrics_epoch.get("val_acc")
+    train_f1 = metrics_epoch.get("train_f1")
+    val_f1 = metrics_epoch.get("val_f1")
 
-    if train_acc is not None:
-        ax2.plot(epochs, train_acc, "b-", label="Training Accuracy", linewidth=2)
-    if val_acc is not None:
-        ax2.plot(epochs, val_acc, "r-", label="Valid Accuracy", linewidth=2)
-    ax2.set_title("Accuracy")
+    if train_f1 is not None:
+        ax2.plot(epochs, train_f1, "b-", label="Training F1", linewidth=2)
+    if val_f1 is not None:
+        ax2.plot(epochs, val_f1, "r-", label="Valid F1", linewidth=2)
+    ax2.set_title("F1 Score")
     ax2.set_xlabel("Epochs")
     ax2.legend()
     ax2.grid(True, alpha=0.3)

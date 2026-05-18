@@ -1,119 +1,93 @@
+import pickle
+from collections.abc import Callable
 from pathlib import Path
 
-import librosa
-import numpy as np
 import pandas as pd
 import pytorch_lightning as L
 import torch
+from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import DataLoader, Dataset
-
-from src.features import AudioFeatureExtractor
-
-
-def apply_mixin(waveform: np.ndarray, noise_paths: list[Path], snr_db: int = 15) -> np.ndarray:
-    if not noise_paths:
-        return waveform
-
-    rng = np.random.default_rng()
-    noise_path = rng.choice(noise_paths)
-
-    noise, _ = librosa.load(noise_path, sr=16000)
-
-    if len(noise) > len(waveform):
-        noise = noise[: len(waveform)]
-    else:
-        pad_len = len(waveform) - len(noise)
-        noise = np.pad(noise, (0, pad_len), mode="constant")
-
-    p_wav = np.mean(waveform**2)
-    p_noise = np.mean(noise**2)
-
-    if p_noise == 0:
-        return waveform
-
-    k = np.sqrt(p_wav / (10 ** (snr_db / 10) * p_noise))
-    mixed = waveform + k * noise
-
-    return mixed.astype(np.float32)
 
 
 class ASTAudioDataset(Dataset):
-    def __init__(
-        self,
-        audio_paths: list[str],
-        labels: list[int] | None = None,
-        config: dict = None,
-        is_train: bool = True,
-        noise_paths: list[Path] = None,
-    ):
-        self.audio_paths = audio_paths
-        self.labels = labels
-        self.is_train = is_train
-        self.noise_paths = noise_paths
-        self.config = config or {}
-        self.rng = np.random.default_rng()
-
-        self.extractor = AudioFeatureExtractor(
-            sample_rate=self.config.get("sample_rate", 16000),
-            need_augment=is_train and self.config.get("use_specaug", False),
-            max_proportion=self.config.get("max_proportion", 0.3),
-        )
+    def __init__(self, samples: list[dict], transform: Callable | None = None):
+        self.samples = samples
+        self.transform = transform
 
     def __len__(self):
-        return len(self.audio_paths)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        wav_path = self.audio_paths[idx]
-        waveform, _ = librosa.load(wav_path, sr=16000)
+        sample = self.samples[idx]
+        feature = torch.load(sample["pt_path"], weights_only=True)
 
-        if self.is_train and self.noise_paths and self.rng.random() < self.config.get("mixin_prob", 0.0):
-            waveform = apply_mixin(waveform, self.noise_paths, self.config.get("snr_db", 15))
+        if self.transform is not None:
+            feature = self.transform(feature)
 
-        with torch.no_grad():
-            waveform_t = torch.from_numpy(waveform).unsqueeze(0)
-            feature = self.extractor(waveform_t)
-
-        feature = feature.squeeze(0)
-
-        if self.labels is not None:
-            return feature, torch.tensor(self.labels[idx], dtype=torch.long)
+        if sample.get("label_id") is not None:
+            return feature, torch.tensor(sample["label_id"], dtype=torch.long)
         return feature
 
 
 class AudioDataModule(L.LightningDataModule):
-    def __init__(self, train_df: pd.DataFrame, val_df: pd.DataFrame, config: dict, noise_paths: list[Path] = None):
+    def __init__(
+        self,
+        train_pickle_path: str,
+        test_pickle_path: str,
+        batch_size: int,
+        num_workers: int,
+        test_size: float,
+        random_state: int,
+        train_transform: Callable | None = None,
+    ):
         super().__init__()
-        self.train_df = train_df
-        self.val_df = val_df
-        self.config = config
-        self.noise_paths = noise_paths
+        self.train_pickle_path = Path(train_pickle_path)
+        self.test_pickle_path = Path(test_pickle_path)
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.test_size = test_size
+        self.random_state = random_state
+        self.train_transform = train_transform
 
-    def setup(self, stage=None):
+        self.train_samples = None
+        self.val_samples = None
+        self.test_samples = None
+
+    def setup(self, stage: str | None = None):
         if stage == "fit" or stage is None:
-            self.train_ds = ASTAudioDataset(
-                audio_paths=self.train_df["audio_path"].tolist(),
-                labels=self.train_df["label_id"].tolist(),
-                config=self.config,
-                is_train=True,
-                noise_paths=self.noise_paths,
-            )
-            self.val_ds = ASTAudioDataset(
-                audio_paths=self.val_df["audio_path"].tolist(),
-                labels=self.val_df["label_id"].tolist(),
-                config=self.config,
-                is_train=False,
-            )
+            with self.train_pickle_path.open("rb") as f:
+                train_df = pd.DataFrame(pickle.load(f))
 
-    def train_dataloader(self):
+            sss = StratifiedShuffleSplit(n_splits=1, test_size=self.test_size, random_state=self.random_state)
+            train_idx, val_idx = next(sss.split(train_df["pt_path"], train_df["label_id"]))
+
+            self.train_samples = train_df.iloc[train_idx].to_dict(orient="records")
+            self.val_samples = train_df.iloc[val_idx].to_dict(orient="records")
+
+            self.train_ds = ASTAudioDataset(self.train_samples, transform=self.train_transform)
+            self.val_ds = ASTAudioDataset(self.val_samples, transform=None)
+
+        if stage == "test" or stage is None:
+            with self.test_pickle_path.open("rb") as f:
+                test_df = pickle.load(f)
+
+            self.test_samples = test_df
+            self.test_ds = ASTAudioDataset(self.test_samples, transform=None)
+
+    def _make_dataloader(self, dataset, shuffle: bool) -> DataLoader:
         return DataLoader(
-            self.train_ds,
-            batch_size=self.config["batch_size"],
-            shuffle=True,
-            num_workers=self.config["num_workers"],
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=shuffle,
+            num_workers=self.num_workers,
             pin_memory=True,
         )
 
+    def train_dataloader(self):
+        return self._make_dataloader(self.train_ds, shuffle=True)
+
     def val_dataloader(self):
-        return DataLoader(
-            self.val_ds, batch_size=self.config["batch_size"], shuffle=False, num_workers=self.config["num_workers"]
-        )
+        return self._make_dataloader(self.val_ds, shuffle=False)
+
+    def test_dataloader(self):
+        return self._make_dataloader(self.test_ds, shuffle=False)
