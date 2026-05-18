@@ -69,10 +69,10 @@ class AudioTrainingSystem(L.LightningModule):
         logits = self(x)
 
         loss = F.cross_entropy(logits, y, label_smoothing=0.1)
-        f1 = self.train_f1(logits, y)
+        self.train_f1.update(logits, y)
 
         self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("train_f1", f1, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train_f1", self.train_f1, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, _batch_idx):
@@ -80,16 +80,18 @@ class AudioTrainingSystem(L.LightningModule):
         logits = self(x)
 
         loss = F.cross_entropy(logits, y)
-        f1 = self.val_f1(logits, y)
+        self.val_f1.update(logits, y)
 
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val_f1", f1, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val_f1", self.val_f1, on_step=False, on_epoch=True, prog_bar=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=self.hparams.lr,
-            weight_decay=1e-5,
+            [
+                {"params": self.model.backbone.parameters(), "lr": self.hparams.lr * 0.01},
+                {"params": self.model.head.parameters(), "lr": self.hparams.lr},
+            ],
+            weight_decay=0.1,
         )
 
         milestones = [4, 7, 11]
