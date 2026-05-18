@@ -13,7 +13,7 @@ from src.model import ASTAudioClassifier, AudioTrainingSystem
 
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
-    with Path(hydra.utils.to_absolute_path(cfg.data.labels_pickle)).open("rb") as f:
+    with Path(hydra.utils.to_absolute_path(cfg.paths.labels_pickle)).open("rb") as f:
         labels_data = pickle.load(f)
     label2id = labels_data["label2id"]
     id2label = labels_data["id2label"]
@@ -21,7 +21,7 @@ def main(cfg: DictConfig) -> None:
 
     checkpoint_path = cfg.prediction.get("checkpoint_path") if hasattr(cfg, "prediction") else None
     if checkpoint_path is None:
-        checkpoint_dir = Path(hydra.utils.to_absolute_path(cfg.training.checkpoint_dir))
+        checkpoint_dir = Path(hydra.utils.to_absolute_path(cfg.trainer.checkpoint_dir))
         checkpoints = sorted(checkpoint_dir.glob("*.ckpt"))
         if not checkpoints:
             raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
@@ -49,10 +49,10 @@ def main(cfg: DictConfig) -> None:
     dm = AudioDataModule(
         train_pickle_path=hydra.utils.to_absolute_path(cfg.data.train_meta_pickle),
         test_pickle_path=hydra.utils.to_absolute_path(cfg.data.test_meta_pickle),
-        batch_size=cfg.training.batch_size * 2,
-        num_workers=cfg.training.num_workers,
+        batch_size=cfg.data.batch_size * 2,
+        num_workers=cfg.data.num_workers,
         test_size=cfg.data.test_size,
-        random_state=cfg.training.random_state,
+        seed=cfg.seed,
         train_transform=None,
     )
 
@@ -69,7 +69,7 @@ def main(cfg: DictConfig) -> None:
             preds = torch.argmax(logits, dim=1).cpu().numpy()
             results.extend(preds.tolist())
 
-    submission_path = Path(hydra.utils.to_absolute_path(cfg.data.submission_csv))
+    submission_path = Path(hydra.utils.to_absolute_path(cfg.paths.submission_csv))
     out_df = pd.read_csv(submission_path)
 
     out_df["label"] = [id2label[pred_id] for pred_id in results[: len(out_df)]]

@@ -113,15 +113,15 @@ def load_labels(labels_pickle: str) -> dict:
 
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
-    set_seed(cfg.training.random_state)
+    set_seed(cfg.seed)
 
-    train_csv = Path(hydra.utils.to_absolute_path(cfg.data.train_csv))
-    train_audio_dir = Path(hydra.utils.to_absolute_path(cfg.data.train_audio_dir))
-    test_audio_dir = Path(hydra.utils.to_absolute_path(cfg.data.test_audio_dir))
-    cache_dir = Path(hydra.utils.to_absolute_path(cfg.data.cache_dir))
+    train_csv = Path(hydra.utils.to_absolute_path(cfg.paths.train_csv))
+    train_audio_dir = Path(hydra.utils.to_absolute_path(cfg.paths.train_audio_dir))
+    test_audio_dir = Path(hydra.utils.to_absolute_path(cfg.paths.test_audio_dir))
+    cache_dir = Path(hydra.utils.to_absolute_path(cfg.paths.cache_dir))
     train_meta_pickle = Path(hydra.utils.to_absolute_path(cfg.data.train_meta_pickle))
     test_meta_pickle = Path(hydra.utils.to_absolute_path(cfg.data.test_meta_pickle))
-    labels_pickle = Path(hydra.utils.to_absolute_path(cfg.data.labels_pickle))
+    labels_pickle = Path(hydra.utils.to_absolute_path(cfg.paths.labels_pickle))
 
     extractor = ASTFeatureExtractor.from_pretrained(cfg.model.model_path)
 
@@ -155,7 +155,7 @@ def main(cfg: DictConfig) -> None:
             pickle.dump(train_samples, f)
 
     elif cfg.split == "test":
-        submission_csv = Path(hydra.utils.to_absolute_path(cfg.data.submission_csv))
+        submission_csv = Path(hydra.utils.to_absolute_path(cfg.paths.submission_csv))
         df_test = pd.read_csv(submission_csv)
 
         test_samples = build_samples_list(

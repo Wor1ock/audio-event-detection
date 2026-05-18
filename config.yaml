@@ -1,44 +1,40 @@
-split: train
+seed: 42
 
-data:
+paths:
   train_csv: "data/train.csv"
   train_audio_dir: "data/audio_train/train"
   test_audio_dir: "data/audio_test"
   submission_csv: "data/submission.csv"
   cache_dir: "data/features_cache"
+  labels_pickle: "data/labels.pickle"
+
+data:
   train_meta_pickle: "data/train_meta.pickle"
   test_meta_pickle: "data/test_meta.pickle"
-  labels_pickle: "data/labels.pickle"
+  batch_size: 8
+  num_workers: 4
   test_size: 0.2
+  use_augmentation: false
+
+augmentation:
+  num_mel_bins: ${audio.num_mel_bins}
+  max_proportion: 0.3
+  time_mask_param: 192
 
 audio:
   sample_rate: 16000
   num_mel_bins: 128
 
-preprocessing:
-  trim:
-    enabled: true
-    top_db: 20y
-    frame_length: 2048
-    hop_length: 512
-
-augmentation:
-  max_proportion: 0.3
-  time_mask_param: 192
-
 model:
-  num_classes: 41
   model_path: "models/ast-finetuned-audioset-10-10-0.4593"
-  lr: 0.001
+  num_classes: 41
   dropout: 0.3
+  lr: 0.001
 
-training:
-  random_state: 42
-  batch_size: 8
-  gradient_accumulation_steps: 4
+trainer:
   max_epochs: 15
+  gradient_accumulation_steps: 4
   patience: 5
-  num_workers: 4
   checkpoint_dir: "models/ast_run/"
   log_dir: "logs"
 

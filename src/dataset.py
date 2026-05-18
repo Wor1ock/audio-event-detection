@@ -37,7 +37,7 @@ class AudioDataModule(L.LightningDataModule):
         batch_size: int,
         num_workers: int,
         test_size: float,
-        random_state: int,
+        seed: int,
         train_transform: Callable | None = None,
     ):
         super().__init__()
@@ -46,7 +46,7 @@ class AudioDataModule(L.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.test_size = test_size
-        self.random_state = random_state
+        self.seed = seed
         self.train_transform = train_transform
 
         self.train_samples = None
@@ -58,7 +58,7 @@ class AudioDataModule(L.LightningDataModule):
             with self.train_pickle_path.open("rb") as f:
                 train_df = pd.DataFrame(pickle.load(f))
 
-            sss = StratifiedShuffleSplit(n_splits=1, test_size=self.test_size, random_state=self.random_state)
+            sss = StratifiedShuffleSplit(n_splits=1, test_size=self.test_size, random_state=self.seed)
             train_idx, val_idx = next(sss.split(train_df["pt_path"], train_df["label_id"]))
 
             self.train_samples = train_df.iloc[train_idx].to_dict(orient="records")
